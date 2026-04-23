@@ -138,6 +138,21 @@
     0%   { transform: translateY(-20px) rotate(0deg); opacity: 1; }
     100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
   }
+
+  /* Face detection indicator */
+  #face-indicator {
+    position: absolute;
+    bottom: 8px;
+    right: 10px;
+    font-size: 11px;
+    font-family: 'Nunito', sans-serif;
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    padding: 3px 8px;
+    border-radius: 20px;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
 </style>
 </head>
 <body>
@@ -147,6 +162,7 @@
 <div id="camera-wrap">
   <video id="video" autoplay playsinline muted></video>
   <canvas id="overlay"></canvas>
+  <div id="face-indicator">👤 Buscando cara...</div>
 </div>
 
 <p id="status">Activa la cámara para comenzar</p>
@@ -154,11 +170,10 @@
 <button id="play-btn" disabled>¡Descubre cuál eres!</button>
 <div id="result-box"></div>
 <div id="personality"></div>
-<p id="perms-tip">Si Chrome pide permiso de cámara, toca "Permitir"</p>
+<p id="perms-tip">Si el navegador pide permiso de cámara, toca "Permitir"</p>
 
-<!-- MediaPipe -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<!-- face-api.js — reliable CDN, ships its own WASM/weights -->
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 
 <script>
 const GOMITAS = [
@@ -208,25 +223,27 @@ const images = GOMITAS.map(g => {
   return im;
 });
 
-const video       = document.getElementById('video');
-const overlayEl   = document.getElementById('overlay');
-const ctx         = overlayEl.getContext('2d');
-const playBtn     = document.getElementById('play-btn');
-const startBtn    = document.getElementById('start-btn');
-const resultBox   = document.getElementById('result-box');
+const video         = document.getElementById('video');
+const overlayEl     = document.getElementById('overlay');
+const ctx           = overlayEl.getContext('2d');
+const playBtn       = document.getElementById('play-btn');
+const startBtn      = document.getElementById('start-btn');
+const resultBox     = document.getElementById('result-box');
 const personalityEl = document.getElementById('personality');
-const statusEl    = document.getElementById('status');
+const statusEl      = document.getElementById('status');
+const faceIndicator = document.getElementById('face-indicator');
 
 let headX = null, headY = null, headW = 80, headH = 80;
 let currentIdx = 0;
 let animating = false;
 let winner = null;
+let detectionInterval = null;
+let modelsLoaded = false;
 
 // ── Draw package above head ───────────────────────────────────────
 function drawPackage(g, imgEl, cx, cy, size) {
   const r = size * 0.55;
 
-  // glow circle
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -237,14 +254,12 @@ function drawPackage(g, imgEl, cx, cy, size) {
   ctx.stroke();
   ctx.restore();
 
-  // package image
   if (imgEl.complete && imgEl.naturalWidth > 0) {
     ctx.save();
     const s = r * 1.6;
     ctx.drawImage(imgEl, cx - s/2, cy - s/2, s, s);
     ctx.restore();
   } else {
-    // fallback colored circle
     ctx.save();
     ctx.font = `bold ${Math.max(13, size * 0.13)}px Nunito,sans-serif`;
     ctx.fillStyle = '#fff';
@@ -268,7 +283,6 @@ function renderLoop() {
 
     drawPackage(g, img, cx, cy, size);
 
-    // winner label
     if (!animating && winner) {
       const labelY = cy + size * 0.62;
       ctx.save();
@@ -306,11 +320,15 @@ function launchConfetti() {
 
 // ── Slot animation ────────────────────────────────────────────────
 function startSlot() {
-  if (animating || headX === null) {
-    if (headX === null) {
-      statusEl.textContent = 'Primero pon tu cara frente a la cámara 📷';
-    }
-    return;
+  if (animating) return;
+
+  // If no face detected, use center of canvas as fallback
+  if (headX === null) {
+    headX = overlayEl.width / 2;
+    headY = overlayEl.height / 2;
+    headW = 120;
+    headH = 120;
+    statusEl.textContent = 'Sin cara detectada — ¡usando el centro! 🎯';
   }
 
   animating = true;
@@ -319,9 +337,9 @@ function startSlot() {
   resultBox.textContent = '';
   personalityEl.style.display = 'none';
 
-  const winnerIdx = Math.floor(Math.random() * GOMITAS.length);
-  const fastTicks = 40;
-  const slowIntervals = [85, 105, 135, 170, 210, 260, 320, 390, 475, 570, 680, 800, 950, 1120];
+  const winnerIdx    = Math.floor(Math.random() * GOMITAS.length);
+  const fastTicks    = 40;
+  const slowIntervals = [85,105,135,170,210,260,320,390,475,570,680,800,950,1120];
 
   let tick = 0;
 
@@ -362,54 +380,98 @@ function startSlot() {
 
 playBtn.addEventListener('click', startSlot);
 
-// ── Camera + MediaPipe ────────────────────────────────────────────
-startBtn.addEventListener('click', async () => {
-  startBtn.disabled = true;
-  statusEl.textContent = 'Iniciando cámara...';
-
+// ── face-api.js detection loop ────────────────────────────────────
+async function loadModels() {
+  // Use jsDelivr CDN for the model weights
+  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
-    });
-    video.srcObject = stream;
-    await new Promise(r => { video.onloadedmetadata = r; });
-    overlayEl.width  = video.videoWidth  || 640;
-    overlayEl.height = video.videoHeight || 480;
+    await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+    modelsLoaded = true;
+    return true;
+  } catch(e) {
+    console.warn('face-api model load failed:', e);
+    return false;
+  }
+}
 
-    statusEl.textContent = 'Cámara activa — detectando cara...';
-    playBtn.disabled = false;
-    startBtn.style.display = 'none';
-    document.getElementById('perms-tip').style.display = 'none';
+async function startDetection() {
+  if (!modelsLoaded) return;
 
-    const fd = new FaceDetection.FaceDetection({
-      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${f}`
-    });
-    fd.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
-    fd.onResults(results => {
-      if (results.detections && results.detections.length > 0) {
-        const bb = results.detections[0].boundingBox;
-        const w = overlayEl.width, h = overlayEl.height;
-        headX = bb.xCenter * w;
-        headY = (bb.yCenter - bb.height * 0.55) * h;
-        headW = bb.width  * w;
-        headH = bb.height * h;
+  const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 });
+
+  async function detect() {
+    if (video.readyState < 2) return;
+    try {
+      const detection = await faceapi.detectSingleFace(video, options);
+      const w = overlayEl.width;
+      const h = overlayEl.height;
+
+      if (detection) {
+        // face-api gives box in natural video coords; video is CSS-mirrored
+        const box = detection.box;
+        // Mirror X to match the CSS scaleX(-1) on the video
+        const mirroredX = w - (box.x + box.width / 2);
+        headX = mirroredX;
+        headY = box.y + box.height * 0.15;   // slightly above nose bridge
+        headW = box.width;
+        headH = box.height;
+        faceIndicator.textContent = '✅ Cara detectada';
         if (!animating && !winner) statusEl.textContent = '¡Cara detectada! Pulsa el botón ✓';
       } else {
         headX = null;
-        if (!animating) statusEl.textContent = 'No te detecto 👀 Mira de frente a la cámara';
+        faceIndicator.textContent = '👤 Sin cara...';
+        if (!animating && !winner) statusEl.textContent = 'No te detecto 👀 Mira de frente a la cámara';
       }
-    });
+    } catch(e) {
+      // silent: detection failed this frame
+    }
+  }
 
-    const camera = new CameraUtils.Camera(video, {
-      onFrame: async () => { await fd.send({ image: video }); },
-      width: overlayEl.width,
-      height: overlayEl.height
-    });
-    camera.start();
+  // Run detection every 150 ms — good balance of performance vs. latency
+  detectionInterval = setInterval(detect, 150);
+}
 
-  } catch (e) {
-    statusEl.textContent = '❌ No se pudo acceder a la cámara. Revisa los permisos en Chrome.';
-    startBtn.disabled = false;
+// ── Camera start ──────────────────────────────────────────────────
+startBtn.addEventListener('click', async () => {
+  startBtn.disabled = true;
+  statusEl.textContent = 'Cargando modelos de detección facial...';
+
+  // Load face-api models in parallel with camera startup
+  const [modelOk] = await Promise.all([
+    loadModels(),
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+        });
+        video.srcObject = stream;
+        await new Promise(r => { video.onloadedmetadata = r; });
+        overlayEl.width  = video.videoWidth  || 640;
+        overlayEl.height = video.videoHeight || 480;
+      } catch(e) {
+        statusEl.textContent = '❌ No se pudo acceder a la cámara. Revisa los permisos.';
+        startBtn.disabled = false;
+        throw e;
+      }
+    })()
+  ]).catch(() => [false]);
+
+  startBtn.style.display = 'none';
+  document.getElementById('perms-tip').style.display = 'none';
+  playBtn.disabled = false;
+
+  if (modelOk) {
+    statusEl.textContent = '📸 Cámara activa — detectando cara...';
+    startDetection();
+  } else {
+    // Graceful degradation: camera works, face detection unavailable
+    statusEl.textContent = '📸 Cámara activa — detección facial no disponible, ¡pero igual puedes jugar!';
+    faceIndicator.textContent = '⚠️ Sin detección';
+    // Use fixed center position as fallback
+    headX = (overlayEl.width  || 640) / 2;
+    headY = (overlayEl.height || 480) * 0.4;
+    headW = 140;
+    headH = 140;
   }
 });
 </script>
