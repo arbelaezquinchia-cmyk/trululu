@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>¿Qué gomita Trululu eres?</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;700&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #fff5f5;
+    font-family: 'Nunito', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1rem 0.75rem 2rem;
+    gap: 0.8rem;
+  }
+
+  h1 {
+    font-family: 'Fredoka One', cursive;
+    font-size: 2rem;
+    color: #e63946;
+    text-align: center;
+    line-height: 1.15;
+    margin-top: 0.5rem;
+    text-shadow: 2px 2px 0px #ffd6d6;
+  }
+
+  #camera-wrap {
+    position: relative;
+    width: 100%;
+    max-width: 420px;
+    aspect-ratio: 4/3;
+    border-radius: 24px;
+    overflow: hidden;
+    border: 4px solid #e63946;
+    background: #1a1a2e;
+    box-shadow: 0 8px 32px rgba(230,57,70,0.25);
+  }
+
+  #video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+    display: block;
+  }
+
+  #overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+
+  #status {
+    font-size: 13px;
+    color: #888;
+    text-align: center;
+    min-height: 1.2rem;
+  }
+
+  .btn-green {
+    font-family: 'Fredoka One', cursive;
+    font-size: 1.1rem;
+    background: #06d6a0;
+    color: #fff;
+    border: none;
+    padding: 0.6rem 2rem;
+    border-radius: 50px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(6,214,160,0.35);
+    transition: transform .1s;
+  }
+  .btn-green:active { transform: scale(0.96); }
+  .btn-green:disabled { background: #ccc; box-shadow: none; cursor: not-allowed; }
+
+  #play-btn {
+    font-family: 'Fredoka One', cursive;
+    font-size: 1.2rem;
+    background: linear-gradient(135deg, #e63946, #ff6b6b);
+    color: #fff;
+    border: none;
+    padding: 0.7rem 2.4rem;
+    border-radius: 50px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(230,57,70,0.4);
+    transition: transform .1s;
+    letter-spacing: 0.5px;
+  }
+  #play-btn:active { transform: scale(0.96); }
+  #play-btn:disabled { background: #ccc; box-shadow: none; cursor: not-allowed; }
+
+  #result-box {
+    font-family: 'Fredoka One', cursive;
+    font-size: 1.4rem;
+    color: #e63946;
+    text-align: center;
+    min-height: 2rem;
+    text-shadow: 1px 1px 0 #ffd6d6;
+  }
+
+  #personality {
+    font-size: 0.9rem;
+    color: #555;
+    text-align: center;
+    max-width: 320px;
+    line-height: 1.5;
+    background: #fff;
+    border-radius: 12px;
+    padding: 0.6rem 1rem;
+    border: 1.5px solid #ffd6d6;
+    display: none;
+  }
+
+  #perms-tip {
+    font-size: 12px;
+    color: #aaa;
+    text-align: center;
+    max-width: 320px;
+    line-height: 1.5;
+  }
+
+  .confetti-piece {
+    position: fixed;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    animation: confetti-fall 2s ease-in forwards;
+    pointer-events: none;
+    z-index: 999;
+  }
+  @keyframes confetti-fall {
+    0%   { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<h1>¿Qué gomita<br>Trululu eres? 🍬</h1>
+
+<div id="camera-wrap">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+</div>
+
+<p id="status">Activa la cámara para comenzar</p>
+<button class="btn-green" id="start-btn">📷 Activar cámara</button>
+<button id="play-btn" disabled>¡Descubre cuál eres!</button>
+<div id="result-box"></div>
+<div id="personality"></div>
+<p id="perms-tip">Si Chrome pide permiso de cámara, toca "Permitir"</p>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script>
+const GOMITAS = [
+  {
+    name: "Dinos",
+    img:  "https://vaquitaexpress.com.co/media/catalog/product/7/7/7702993051795.jpg",
+    color: "#06d6a0",
+    personality: "Eres clásico/a y nostálgico/a. ¡El favorito de todos desde siempre!"
+  },
+  {
+    name: "Sandías Ácidas",
+    img:  "https://vaquitaexpress.com.co/media/catalog/product/7/7/7702993051818.jpg",
+    color: "#e63946",
+    personality: "Eres intenso/a y sorprendente. Nadie te espera pero todos te quieren."
+  },
+  {
+    name: "Gusanos Ácidos",
+    img:  "https://vaquitaexpress.com.co/media/catalog/product/7/7/7702993051733.jpg",
+    color: "#74b816",
+    personality: "Eres relajado/a y sin filtro. Todo te resbala, nada te detiene."
+  },
+  {
+    name: "Casquitos",
+    img:  "https://vaquitaexpress.com.co/media/catalog/product/7/7/7702993053461.jpg",
+    color: "#ff9f43",
+    personality: "Eres dulce y confiable. El amigo que nunca falla cuando más se necesita."
+  },
+  {
+    name: "Splash Rellenas",
+    img:  "https://vaquitaexpress.com.co/media/catalog/product/7/7/7702993053126.jpg",
+    color: "#fd79a8",
+    personality: "Eres misterioso/a. Tienes mucho más de lo que muestras por fuera."
+  },
+  {
+    name: "Sabores",
+    img:  "https://vaquitaexpress.com.co/media/catalog/product/7/7/7702993051757.jpg",
+    color: "#a29bfe",
+    personality: "Eres colorido/a y social. La vida de cualquier fiesta donde llegues."
+  },
+];
+
+// Preload images
+const images = GOMITAS.map(g => {
+  const im = new Image();
+  im.crossOrigin = "anonymous";
+  im.src = g.img;
+  return im;
+});
+
+const video       = document.getElementById('video');
+const overlayEl   = document.getElementById('overlay');
+const ctx         = overlayEl.getContext('2d');
+const playBtn     = document.getElementById('play-btn');
+const startBtn    = document.getElementById('start-btn');
+const resultBox   = document.getElementById('result-box');
+const personalityEl = document.getElementById('personality');
+const statusEl    = document.getElementById('status');
+
+let headX = null, headY = null, headW = 80, headH = 80;
+let currentIdx = 0;
+let animating = false;
+let winner = null;
+
+// ── Draw package above head ───────────────────────────────────────
+function drawPackage(g, imgEl, cx, cy, size) {
+  const r = size * 0.55;
+
+  // glow circle
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = g.color + 'bb';
+  ctx.fill();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.restore();
+
+  // package image
+  if (imgEl.complete && imgEl.naturalWidth > 0) {
+    ctx.save();
+    const s = r * 1.6;
+    ctx.drawImage(imgEl, cx - s/2, cy - s/2, s, s);
+    ctx.restore();
+  } else {
+    // fallback colored circle
+    ctx.save();
+    ctx.font = `bold ${Math.max(13, size * 0.13)}px Nunito,sans-serif`;
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(g.name, cx, cy);
+    ctx.restore();
+  }
+}
+
+// ── Render loop ───────────────────────────────────────────────────
+function renderLoop() {
+  ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
+
+  if (headX !== null && (animating || winner)) {
+    const size = Math.max(headW, headH) * 1.7;
+    const cx   = headX;
+    const cy   = headY - size * 0.38;
+    const g    = GOMITAS[currentIdx];
+    const img  = images[currentIdx];
+
+    drawPackage(g, img, cx, cy, size);
+
+    // winner label
+    if (!animating && winner) {
+      const labelY = cy + size * 0.62;
+      ctx.save();
+      ctx.font = `bold ${Math.max(16, size * 0.14)}px Fredoka One,cursive`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 5;
+      ctx.strokeText(winner.name, cx, labelY);
+      ctx.fillStyle = winner.color;
+      ctx.fillText(winner.name, cx, labelY);
+      ctx.restore();
+    }
+  }
+
+  requestAnimationFrame(renderLoop);
+}
+renderLoop();
+
+// ── Confetti ──────────────────────────────────────────────────────
+function launchConfetti() {
+  const colors = ['#e63946','#06d6a0','#ffd166','#a29bfe','#fd79a8','#ff9f43'];
+  for (let i = 0; i < 60; i++) {
+    const el = document.createElement('div');
+    el.className = 'confetti-piece';
+    el.style.left = Math.random() * 100 + 'vw';
+    el.style.top  = '-10px';
+    el.style.background = colors[Math.floor(Math.random() * colors.length)];
+    el.style.animationDelay = Math.random() * 0.8 + 's';
+    el.style.transform = `rotate(${Math.random()*360}deg)`;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3000);
+  }
+}
+
+// ── Slot animation ────────────────────────────────────────────────
+function startSlot() {
+  if (animating || headX === null) {
+    if (headX === null) {
+      statusEl.textContent = 'Primero pon tu cara frente a la cámara 📷';
+    }
+    return;
+  }
+
+  animating = true;
+  winner    = null;
+  playBtn.disabled = true;
+  resultBox.textContent = '';
+  personalityEl.style.display = 'none';
+
+  const winnerIdx = Math.floor(Math.random() * GOMITAS.length);
+  const fastTicks = 40;
+  const slowIntervals = [85, 105, 135, 170, 210, 260, 320, 390, 475, 570, 680, 800, 950, 1120];
+
+  let tick = 0;
+
+  function fastPhase() {
+    if (tick < fastTicks) {
+      currentIdx = (currentIdx + 1) % GOMITAS.length;
+      tick++;
+      setTimeout(fastPhase, 60);
+    } else {
+      let stepsLeft = ((winnerIdx - currentIdx) % GOMITAS.length + GOMITAS.length) % GOMITAS.length;
+      let target = stepsLeft;
+      while (target < slowIntervals.length) target += GOMITAS.length;
+
+      let s = 0;
+      function slowPhase() {
+        if (s < target) {
+          currentIdx = (currentIdx + 1) % GOMITAS.length;
+          s++;
+          const delay = s <= slowIntervals.length ? slowIntervals[s - 1] : 1300;
+          setTimeout(slowPhase, delay);
+        } else {
+          currentIdx = winnerIdx;
+          animating  = false;
+          winner     = GOMITAS[winnerIdx];
+          resultBox.textContent = `¡Eres ${winner.name}! 🎉`;
+          personalityEl.textContent = winner.personality;
+          personalityEl.style.display = 'block';
+          playBtn.disabled = false;
+          playBtn.textContent = '¡Otra vez!';
+          launchConfetti();
+        }
+      }
+      slowPhase();
+    }
+  }
+  fastPhase();
+}
+
+playBtn.addEventListener('click', startSlot);
+
+// ── Camera + MediaPipe ────────────────────────────────────────────
+startBtn.addEventListener('click', async () => {
+  startBtn.disabled = true;
+  statusEl.textContent = 'Iniciando cámara...';
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+    });
+    video.srcObject = stream;
+    await new Promise(r => { video.onloadedmetadata = r; });
+    overlayEl.width  = video.videoWidth  || 640;
+    overlayEl.height = video.videoHeight || 480;
+
+    statusEl.textContent = 'Cámara activa — detectando cara...';
+    playBtn.disabled = false;
+    startBtn.style.display = 'none';
+    document.getElementById('perms-tip').style.display = 'none';
+
+    const fd = new FaceDetection.FaceDetection({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${f}`
+    });
+    fd.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
+    fd.onResults(results => {
+      if (results.detections && results.detections.length > 0) {
+        const bb = results.detections[0].boundingBox;
+        const w = overlayEl.width, h = overlayEl.height;
+        headX = bb.xCenter * w;
+        headY = (bb.yCenter - bb.height * 0.55) * h;
+        headW = bb.width  * w;
+        headH = bb.height * h;
+        if (!animating && !winner) statusEl.textContent = '¡Cara detectada! Pulsa el botón ✓';
+      } else {
+        headX = null;
+        if (!animating) statusEl.textContent = 'No te detecto 👀 Mira de frente a la cámara';
+      }
+    });
+
+    const camera = new CameraUtils.Camera(video, {
+      onFrame: async () => { await fd.send({ image: video }); },
+      width: overlayEl.width,
+      height: overlayEl.height
+    });
+    camera.start();
+
+  } catch (e) {
+    statusEl.textContent = '❌ No se pudo acceder a la cámara. Revisa los permisos en Chrome.';
+    startBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
